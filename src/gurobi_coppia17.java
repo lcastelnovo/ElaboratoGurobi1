@@ -130,6 +130,9 @@ public class gurobi_coppia17
                     obj.addTerm(-spettatori[i][j], xij[i][j]); //Se la fascia è tra le ultime 4, sottraggo il valore
             }
         }
+        
+        //TODO ATTENZIONE, MANCA LA SOMMA INVERSA!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        
         model.setObjective(obj);
         model.set(GRB.IntAttr.ModelSense, GRB.MINIMIZE);
     }
