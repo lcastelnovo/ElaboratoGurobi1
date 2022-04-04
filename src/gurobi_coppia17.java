@@ -143,7 +143,6 @@ public class gurobi_coppia17
         for(int i = 0; i < emittenti; i++)
         {
             GRBLinExpr vincolo = new GRBLinExpr();
-            //TODO Perche il vincolo e' nel ciclo for e non fuori come in addMinutePerBroadcasterConstr?
             for(int j = 0; j < fasce; j++)
             {
                 vincolo.addTerm(costi[i][j], xij[i][j]);
