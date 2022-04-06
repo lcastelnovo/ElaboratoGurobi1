@@ -45,7 +45,7 @@ public class gurobi_coppia17
                         {3032, 3431, 2983, 2105, 2986, 2929, 2625, 2560}
                 };
         final int[] spesa_max_per_emittente = {2534, 2794, 2967, 2525, 3159, 2983, 3267, 2521, 3231, 3262};
-        final double budget_percentuale_per_fascia = 0.02;
+        final double budget_percentuale = 0.02;
         final int copertura_giornaliera_minima = 83261;
         try
         {
@@ -53,12 +53,12 @@ public class gurobi_coppia17
             setParams(env);
             GRBModel model = new GRBModel(env);
             GRBVar[][] xij = addVars(model, emittenti, fasce);
-            GRBVar[] slacks = addSlackSurplusVars(model,emittenti, fasce);
+            //GRBVar[] slacks = addSlackSurplusVars(model,emittenti, fasce);
             addObjectiveFunction(model, xij, spettatori_per_emittente_per_fascia, emittenti, fasce);
-            addCostPerMinuteConstr(model, xij, costi_al_minuto_per_emittente_per_fascia, spesa_max_per_emittente, slacks, emittenti, fasce);
-            addBudgetPerTimeSlotConstr(model, xij, costi_al_minuto_per_emittente_per_fascia, budget_percentuale_per_fascia, slacks, emittenti, fasce);
-            addMinutePerBroadcasterConstr(model, xij, minuti_massimi_per_emittente_per_fascia, slacks, emittenti, fasce);
-            addDailyCoverageConstr(model, xij, spettatori_per_emittente_per_fascia, copertura_giornaliera_minima, slacks, emittenti, fasce);
+            addCostPerMinuteConstr(model, xij, costi_al_minuto_per_emittente_per_fascia, spesa_max_per_emittente, emittenti, fasce);
+            addBudgetPerTimeSlotConstr(model, xij, costi_al_minuto_per_emittente_per_fascia, budget_percentuale, spesa_max_per_emittente, emittenti, fasce);
+            addMinutePerBroadcasterConstr(model, xij, minuti_massimi_per_emittente_per_fascia, emittenti, fasce);
+            addDailyCoverageConstr(model, xij, spettatori_per_emittente_per_fascia, copertura_giornaliera_minima, emittenti, fasce);
             resolve(model);
 
         } catch (GRBException e) {
@@ -112,32 +112,38 @@ public class gurobi_coppia17
     private static void addObjectiveFunction(GRBModel model, GRBVar[][] xij, int[][] spettatori, int emittenti, int fasce) throws GRBException
     // Metodo per inserire la funzione obiettivo nel modello
     {
-        int mezzagiornata = (fasce / 2) -1; //-1 per adattare all'array che parte da 0
-        GRBLinExpr obj = new GRBLinExpr();
-        /* problema artificiale
-        for (int i = 0; i < emittenti + fasce; i++)
-        {
-            obj.addTerm(1.0, aux[i]);
-        }
-        */
+        int mezzagiornata = (fasce / 2) - 1; //-1 per adattare all'array che parte da 0
+        int modulo_plus = 0, modulo_minus = 0;
+        GRBLinExpr obj_plus = new GRBLinExpr();
+        GRBLinExpr obj_minus = new GRBLinExpr();
         for(int i = 0; i < emittenti; i++)
         {
             for(int j = 0; j < fasce; j++)
             {
                 if (j <= mezzagiornata)
-                    obj.addTerm(spettatori[i][j], xij[i][j]); //Se la fascia è tra le prime 4, sommo il valore
+                {
+                    modulo_plus += spettatori[i][j];
+                    modulo_minus += -spettatori[i][j];
+                    obj_plus.addTerm(spettatori[i][j], xij[i][j]); //Se la fascia è tra le prime 4, sommo il valore
+                    obj_minus.addTerm(-spettatori[i][j], xij[i][j]); // Costruisco anche la funzione obiettivo opposta
+                }
                 else
-                    obj.addTerm(-spettatori[i][j], xij[i][j]); //Se la fascia è tra le ultime 4, sottraggo il valore
+                {
+                    modulo_plus += -spettatori[i][j];
+                    modulo_minus += spettatori[i][j];
+                    obj_plus.addTerm(-spettatori[i][j], xij[i][j]); //Se la fascia è tra le ultime 4, sottraggo il valore
+                    obj_minus.addTerm(spettatori[i][j], xij[i][j]);
+                }
             }
         }
-        
-        //TODO ATTENZIONE, MANCA LA SOMMA INVERSA!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        
-        model.setObjective(obj);
-        model.set(GRB.IntAttr.ModelSense, GRB.MINIMIZE);
+        if (modulo_plus >= modulo_minus) // Uso come funzione obbiettivo quella col coefficiente massimo (In pratica, applico il valore assoluto)
+            model.setObjective(obj_plus);
+        else
+            model.setObjective(obj_minus);
+        model.set(GRB.IntAttr.ModelSense, GRB.MINIMIZE); //Imposto di trovare il minimo per la funzione obbiettivo
     }
 
-    private static void addCostPerMinuteConstr(GRBModel model, GRBVar[][] xij, int[][] costi, int[] beta, GRBVar[] slacks, int emittenti, int fasce) throws GRBException
+    private static void addCostPerMinuteConstr(GRBModel model, GRBVar[][] xij, int[][] costi, int[] beta, int emittenti, int fasce) throws GRBException
     // Metodo per inserire i vincoli sui costi al minuto
     {
         for(int i = 0; i < emittenti; i++)
@@ -147,15 +153,19 @@ public class gurobi_coppia17
             {
                 vincolo.addTerm(costi[i][j], xij[i][j]);
             }
-            //risolvo il problema in forma standard
-            vincolo.addTerm(1.0, slacks[i]);
-            model.addConstr(vincolo, GRB.EQUAL, beta[i], "vincolo_costi_al_minuto_" + i);
+            model.addConstr(vincolo, GRB.LESS_EQUAL, beta[i], "vincolo_costi_al_minuto_" + i);
         }
     }
 
-    private static void addBudgetPerTimeSlotConstr(GRBModel model, GRBVar[][] xij, int[][] costi, double omega, GRBVar[] slacks, int emittenti, int fasce) throws GRBException
+    private static void addBudgetPerTimeSlotConstr(GRBModel model, GRBVar[][] xij, int[][] costi, double omega, int[] beta, int emittenti, int fasce) throws GRBException
     // Metodo per inserire i vincoli sul budget per fascia oraria
     {
+        int budget_totale = 0;
+        for (int i = 0; i < beta.length; i++)
+        {
+            budget_totale += beta[i];
+        }
+        double budget_percentuale = omega * budget_totale;
         for(int i = 0; i < fasce; i++)
         {
             GRBLinExpr vincolo = new GRBLinExpr();
@@ -163,29 +173,25 @@ public class gurobi_coppia17
             {
                 vincolo.addTerm(costi[j][i], xij[j][i]);
             }
-            //risolvo il problema in forma standard
-            vincolo.addTerm(-1.0, slacks[i]);
-            model.addConstr(vincolo, GRB.EQUAL, omega, "vincolo_budget_per_fascia_" + i);
+            model.addConstr(vincolo, GRB.GREATER_EQUAL, budget_percentuale, "vincolo_budget_per_fascia_" + i);
         }
     }
 
-    private static void addMinutePerBroadcasterConstr(GRBModel model, GRBVar[][] xij, int[][] minuti_max, GRBVar[] slacks, int emittenti, int fasce) throws GRBException
+    private static void addMinutePerBroadcasterConstr(GRBModel model, GRBVar[][] xij, int[][] minuti_max, int emittenti, int fasce) throws GRBException
     // Metodo per inserire i vincoli sui costi al minuto
     {
-        GRBLinExpr vincolo = new GRBLinExpr();
         for(int i = 0; i < emittenti; i++)
         {
             for(int j = 0; j < fasce; j++)
             {
+                GRBLinExpr vincolo = new GRBLinExpr();
                 vincolo.addTerm(1.0, xij[i][j]);
-                //risolvo il problema in forma standard
-                vincolo.addTerm(1.0, slacks[i]);
-                model.addConstr(vincolo, GRB.EQUAL, minuti_max[i][j], "vincolo_minuti_massimi_per_fascia_ed_emittente_" + i + "_" + j);
+                model.addConstr(vincolo, GRB.LESS_EQUAL, minuti_max[i][j], "vincolo_minuti_massimi_per_fascia_ed_emittente_" + i + "_" + j);
             }
         }
     }
 
-    private static void addDailyCoverageConstr(GRBModel model, GRBVar[][] xij, int[][] spettatori, int copertura_min, GRBVar[] slacks, int emittenti, int fasce) throws GRBException
+    private static void addDailyCoverageConstr(GRBModel model, GRBVar[][] xij, int[][] spettatori, int copertura_min, int emittenti, int fasce) throws GRBException
     // Metodo per inserire i vincoli sui costi al minuto
     {
         GRBLinExpr vincolo = new GRBLinExpr();
@@ -195,10 +201,8 @@ public class gurobi_coppia17
             {
                 vincolo.addTerm(spettatori[i][j], xij[i][j]);
             }
-            //risolvo il problema in forma standard
-            vincolo.addTerm(-1.0, slacks[i]); // Inserire una o tutte le variabili di slack???
         }
-        model.addConstr(vincolo, GRB.EQUAL, copertura_min, "vincolo_copertura_massima_giornaliera");
+        model.addConstr(vincolo, GRB.GREATER_EQUAL, copertura_min, "vincolo_copertura_massima_giornaliera");
     }
 
     private static void resolve(GRBModel model) throws GRBException
@@ -211,5 +215,18 @@ public class gurobi_coppia17
         // 3 non esiste soluzione ammissibile (infeasible)
         // 5 soluzione illimitata
         // 9 tempo limite raggiunto
+
+       /* for(GRBVar var : model.getVars())
+        {
+            //stampo il valore delle variabili e i costi ridotti associati all'ottimo
+            System.out.println(var.get(GRB.StringAttr.VarName)+ ": "+ var.get(GRB.DoubleAttr.X) + " RC = " + var.get(GRB.DoubleAttr.RC));
+        }*/
+
+        //per stamapre a video il valore ottimo delle slack/surplus del problema
+//		for(GRBConstr c: model.getConstrs())
+//		{
+//			System.out.println(c.get(StringAttr.ConstrName)+ ": "+ c.get(DoubleAttr.Slack));
+//			//Per gurobi SLACK vuol dire sia slack che surplus
+//		}
     }
 }
