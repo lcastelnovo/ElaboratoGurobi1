@@ -1,8 +1,46 @@
 import gurobi.*;
+import java.util.ArrayList;
 
 public class gurobi_coppia17
 {
+    // Costanti per l'output
+    private static final String LOG_FILENAME = "matriciopoli.log";
+    private static final String NUMERO_GRUPPO = "17";
+    private static final String COMPONENTE_1 = "Castelnovo Luca";
+    private static final String COMPONENTE_2 = "Soncina Daniele";
+    private static final String MINORE = "<";
+    private static final String MAGGIORE = ">";
+    private static final String GRUPPO = "COPPIA " + MINORE + NUMERO_GRUPPO + MAGGIORE;
+    private static final String COMPONENTI = "Componenti "+ MINORE + COMPONENTE_1 + MAGGIORE + " " + MINORE + COMPONENTE_2 + MAGGIORE;
+    private static final String QUESITO_1 = "QUESITO I: ";
+    private static final String QUESITO_2 = "QUESITO II: ";
+    private static final String QUESITO_3 = "QUESITO III: ";
+    private static final String FUNZIONE_OBIETTIVO = "funzione obiettivo = ";
+    private static final String COPERTURA = "copertura raggiunta totale: ";
+    private static final String TEMPO = "tempo acquistato (minuti): ";
+    private static final String BUDGET = "budget inutilizzato: ";
+    private static final String SLACK_IN_SEGUITO = "Di seguito il valore delle slack/surplus all'ottimo dei rispettivi vincoli";
+    private static final String QUADRA_APERTA = "\n[ ";
+    private static final String QUADRA_CHIUSA = "]";
+    private static final String SOLUZIONE_BASE_OTTIMA = "soluzione di base ottima: " + QUADRA_APERTA;
+    private static final String FORMATO_NUMERO_CIFRE_DECIMALI ="%.4f";
+    private static final String SPIEGAZIONE_BASI = "1 se in base, 0 altrimenti.";
+    private static final String VARIABILI_IN_BASE = "variabili In base: " + QUADRA_APERTA;
+    private static final String BASE = ": 1";
+    private static final String NON_BASE = ": 0";
+    private static final String SLACK_IN_BASE = "Slack in base: " + QUADRA_APERTA;
+    private static final String COEFFICIENTI_COSTO_RIDOTTO = "coefficienti di costo ridotto: " + QUADRA_APERTA;
+    private static final String COEFF_CR_SLACK = "coefficenti di costo ridotto delle slack: " + QUADRA_APERTA;
+    private static final String SOLUZIONE_MULTIPLA = "soluzione ottima multipla: ";
+    private static final String SOLUZIONE_DEGENERE = "soluzione ottima degenere: ";
+    private static final String SI = "Si";
+    private static final String NO = "No";
+    private static final String VINCOLI_VERTICE_OTTIMO = "vincoli vertice ottimo: " + QUADRA_APERTA;
+    private static final String VARIABILI_NON_OTTIME_UNO = "Prima soluzione non ottima selezionata: " + QUADRA_APERTA;
+    private static final String VARIABILI_NON_OTTIME_DUE = "Seconda soluzione non ottima selezionata: " + QUADRA_APERTA;
+
     public static void main(String[] args) {
+        // Costanti per la risoluzione del problema
         final int emittenti = 10;
         final int fasce = 8;
         final int[][] minuti_massimi_per_emittente_per_fascia =
@@ -49,18 +87,37 @@ public class gurobi_coppia17
         final int copertura_giornaliera_minima = 83261;
         try
         {
-            GRBEnv env = new GRBEnv("matriciopoli.log");
+            //Creo l'enviroment e imposto i settaggi desiderati
+            GRBEnv env = new GRBEnv(LOG_FILENAME);
             setParams(env);
+            //Creo il modello, le variabili e imposto la funzione obiettivo e i vincoli del problema
             GRBModel model = new GRBModel(env);
             GRBVar[][] xij = addVars(model, emittenti, fasce);
-            //GRBVar[] slacks = addSlackSurplusVars(model,emittenti, fasce);
+            double copertura_raggiunta, minuti_acquistati, budget_inutilizzato;
             addObjectiveFunction(model, xij, spettatori_per_emittente_per_fascia, emittenti, fasce);
             addCostPerMinuteConstr(model, xij, costi_al_minuto_per_emittente_per_fascia, spesa_max_per_emittente, emittenti, fasce);
             addBudgetPerTimeSlotConstr(model, xij, costi_al_minuto_per_emittente_per_fascia, budget_percentuale, spesa_max_per_emittente, emittenti, fasce);
             addMinutePerBroadcasterConstr(model, xij, minuti_massimi_per_emittente_per_fascia, emittenti, fasce);
             addDailyCoverageConstr(model, xij, spettatori_per_emittente_per_fascia, copertura_giornaliera_minima, emittenti, fasce);
+            //avvio la risoluzione del problema
             resolve(model);
-
+            //calcolo alcune informazioni utili alle consegne
+            copertura_raggiunta = calculateReachedCoverage(xij, spettatori_per_emittente_per_fascia, emittenti, fasce);
+            minuti_acquistati = calculateBoughtMinutes(xij, emittenti, fasce);
+            budget_inutilizzato = calculateUselessBudget(spesa_max_per_emittente, costi_al_minuto_per_emittente_per_fascia, xij, emittenti, fasce);
+            //Mostro l'intestazione dell'output dei quesiti
+            showProjectGeneralities();
+            //Primo quesito
+            showFirstAnswer(model, copertura_raggiunta, minuti_acquistati, budget_inutilizzato);
+            //Secondo quesito
+            showSecondAnswer(model);
+            //Terzo quesito
+            showThirdAnswer(env, spettatori_per_emittente_per_fascia, costi_al_minuto_per_emittente_per_fascia, minuti_massimi_per_emittente_per_fascia,
+                    spesa_max_per_emittente,budget_percentuale, copertura_giornaliera_minima, emittenti, fasce);
+            // Libera le risorse occupate dal modello e dal enviroment
+            model.dispose();
+            env.dispose();
+            // FINE
         } catch (GRBException e) {
             e.printStackTrace();
         }
@@ -160,12 +217,8 @@ public class gurobi_coppia17
     private static void addBudgetPerTimeSlotConstr(GRBModel model, GRBVar[][] xij, int[][] costi, double omega, int[] beta, int emittenti, int fasce) throws GRBException
     // Metodo per inserire i vincoli sul budget per fascia oraria
     {
-        int budget_totale = 0;
-        for (int i = 0; i < beta.length; i++)
-        {
-            budget_totale += beta[i];
-        }
-        double budget_percentuale = omega * budget_totale;
+        int budget_totale = calculateMaxBudget(beta);
+        double budget_calcolato = omega * budget_totale;
         for(int i = 0; i < fasce; i++)
         {
             GRBLinExpr vincolo = new GRBLinExpr();
@@ -173,7 +226,7 @@ public class gurobi_coppia17
             {
                 vincolo.addTerm(costi[j][i], xij[j][i]);
             }
-            model.addConstr(vincolo, GRB.GREATER_EQUAL, budget_percentuale, "vincolo_budget_per_fascia_" + i);
+            model.addConstr(vincolo, GRB.GREATER_EQUAL, budget_calcolato, "vincolo_budget_per_fascia_" + i);
         }
     }
 
@@ -210,23 +263,288 @@ public class gurobi_coppia17
     {
         model.optimize();
         int status = model.get(GRB.IntAttr.Status);
-        System.out.println("\n\n\nStato Ottimizzazione: "+ status + "\n");
+        System.out.println("\nStato Ottimizzazione: "+ status + "\n");
         // 2 soluzione ottima trovata
         // 3 non esiste soluzione ammissibile (infeasible)
         // 5 soluzione illimitata
         // 9 tempo limite raggiunto
-
-       /* for(GRBVar var : model.getVars())
+    }
+    private static int calculateMaxBudget(int[] beta)
+    {
+        //Metodo per calcolare il massimo budget a disposizione
+        int budget_totale = 0;
+        for (int i = 0; i < beta.length; i++)
         {
-            //stampo il valore delle variabili e i costi ridotti associati all'ottimo
-            System.out.println(var.get(GRB.StringAttr.VarName)+ ": "+ var.get(GRB.DoubleAttr.X) + " RC = " + var.get(GRB.DoubleAttr.RC));
-        }*/
+            budget_totale += beta[i];
+        }
+        return budget_totale;
+    }
 
-        //per stamapre a video il valore ottimo delle slack/surplus del problema
-//		for(GRBConstr c: model.getConstrs())
-//		{
-//			System.out.println(c.get(StringAttr.ConstrName)+ ": "+ c.get(DoubleAttr.Slack));
-//			//Per gurobi SLACK vuol dire sia slack che surplus
-//		}
+    private static double calculateReachedCoverage(GRBVar[][] xij, int[][] spettatori, int emittenti, int fasce) throws GRBException
+    {
+        //Metodo per calcolare la copertura raggiunta all'ottimo
+        double copertura = 0.0;
+        for (int i = 0; i < emittenti; i++) {
+            for (int j = 0; j < fasce; j++) {
+                copertura += + (spettatori[i][j] * xij[i][j].get(GRB.DoubleAttr.X));
+            }
+        }
+        return copertura;
+    }
+
+    private static double calculateBoughtMinutes(GRBVar[][] xij, int emittenti, int fasce) throws GRBException
+    {
+        //Metodo per calcolare i minuti comprati all'ottimo
+        double minuti_comprati = 0;
+        for (int i = 0; i < emittenti; i++)
+        {
+            for (int j = 0; j < fasce; j++)
+            {
+                minuti_comprati += (xij[i][j].get(GRB.DoubleAttr.X));
+            }
+        }
+        return minuti_comprati;
+    }
+
+    private static double calculateUselessBudget(int[] budget, int[][] costi, GRBVar[][] xij, int emittenti, int fasce) throws GRBException
+    {
+        //Metodo per calcolare il budget inutilizzato all'ottimo
+        int budget_totale = calculateMaxBudget(budget);
+        int spesa_effettuata = 0;
+
+        for (int i = 0; i < emittenti; i++)
+        {
+            for (int j = 0; j < fasce; j++)
+            {
+                spesa_effettuata += (costi[i][j] * xij[i][j].get(GRB.DoubleAttr.X));
+            }
+        }
+        int budget_inutilizzato = budget_totale - spesa_effettuata;
+        return budget_inutilizzato;
+    }
+
+    private static void showProjectGeneralities()
+    {
+        //Mostra solo la prima intestazione dell'output
+        System.out.println("\n" + GRUPPO + "\n" + COMPONENTI + "\n");
+    }
+
+    private static void showFirstAnswer(GRBModel model, double copertura, double minuti, double budget) throws  GRBException
+    {
+        String funzione_obiettivo = String.format(FORMATO_NUMERO_CIFRE_DECIMALI, model.get(GRB.DoubleAttr.ObjVal));
+        String copertura_raggiunta = String.format(FORMATO_NUMERO_CIFRE_DECIMALI, copertura);
+        String minuti_acquistati = String.format(FORMATO_NUMERO_CIFRE_DECIMALI, minuti);
+        String budget_inutilizzato = String.format(FORMATO_NUMERO_CIFRE_DECIMALI, budget);
+        System.out.println(QUESITO_1);
+        System.out.println(FUNZIONE_OBIETTIVO + " " + MINORE + funzione_obiettivo + MAGGIORE);
+        System.out.println(COPERTURA + " " + MINORE + copertura_raggiunta + MAGGIORE);
+        System.out.println(TEMPO + " " + MINORE + minuti_acquistati + MAGGIORE);
+        System.out.println(BUDGET + " " + MINORE + budget_inutilizzato + MAGGIORE);
+        System.out.println(SOLUZIONE_BASE_OTTIMA);
+        for(GRBVar var : model.getVars())
+        {
+            //stampo il valore delle variabili all'ottimo
+            System.out.println(var.get(GRB.StringAttr.VarName) + " = " + MINORE + var.get(GRB.DoubleAttr.X) + MAGGIORE);
+        }
+        //stampo il valore ottimo delle slack/surplus del problema
+        System.out.println("\n" + SLACK_IN_SEGUITO + "\n");
+		for(GRBConstr c: model.getConstrs())
+		{
+			System.out.println(MINORE + c.get(GRB.StringAttr.ConstrName) + MAGGIORE + ": " + MINORE + c.get(GRB.DoubleAttr.Slack) + MAGGIORE);
+		}
+        System.out.println(("\n"));
+    }
+
+    private static void showSecondAnswer(GRBModel model) throws GRBException {
+        System.out.println(QUESITO_2);
+        System.out.println(VARIABILI_IN_BASE);
+        System.out.println(SPIEGAZIONE_BASI);
+        for(GRBVar var : model.getVars())
+        //Stampo sa video le variabili specificando se sono in base o meno
+        {
+            try
+            {
+                if(var.get(GRB.IntAttr.VBasis) == 0)
+                    System.out.println(MINORE + var.get(GRB.StringAttr.VarName) + BASE + MAGGIORE);
+                else
+                    System.out.println(MINORE + var.get(GRB.StringAttr.VarName) + NON_BASE + MAGGIORE);
+            }
+            catch (GRBException e)
+            {
+                e.printStackTrace();
+            }
+        }
+        System.out.println(QUADRA_CHIUSA);
+        System.out.println(SLACK_IN_BASE);
+        System.out.println(SPIEGAZIONE_BASI);
+        for(GRBConstr constr : model.getConstrs())
+        {
+            //Faccio lo stesso con le variabili di slack
+            try
+            {
+                if (constr.get(GRB.IntAttr.CBasis) == 0)
+                    System.out.println(MINORE + constr.get(GRB.StringAttr.ConstrName) + BASE + MAGGIORE);
+                else
+                    System.out.println(MINORE + constr.get(GRB.StringAttr.ConstrName) + NON_BASE + MAGGIORE);
+            }
+
+            catch (GRBException e)
+            {
+                e.printStackTrace();
+            }
+        }
+        System.out.println(QUADRA_CHIUSA);
+        //Contatore per determinare se la soluzione è multipla
+        int counter = 0;
+        ArrayList<String> coefficienti_costo_ridotto = new ArrayList<String>();
+        //Ciclo per determinare i coefficienti di costo ridotto delle variabili
+        for(GRBVar var : model.getVars())
+        {
+            coefficienti_costo_ridotto.add(String.format(FORMATO_NUMERO_CIFRE_DECIMALI, var.get(GRB.DoubleAttr.RC)));
+            if(var.get(GRB.DoubleAttr.RC) == 0)
+            {
+                counter++;
+            }
+        }
+        //Ciclo per determinare i coefficienti di costo ridotto delle slack
+        for(GRBConstr constr : model.getConstrs())
+        {
+            double pi = - constr.get(GRB.DoubleAttr.Pi);
+            String coefficiente = String.format(FORMATO_NUMERO_CIFRE_DECIMALI,pi);
+
+            if(pi == 0)
+            {
+                counter++;
+            }
+            coefficienti_costo_ridotto.add(coefficiente);
+        }
+        System.out.println("\n" + COEFFICIENTI_COSTO_RIDOTTO);
+        int i = 0;
+        for(String coeff : coefficienti_costo_ridotto)
+        {
+            i++;
+            if (i == 80)
+            {
+                System.out.println(MINORE + coeff + MAGGIORE);
+                System.out.println(QUADRA_CHIUSA);
+                System.out.println(COEFF_CR_SLACK);
+            }
+            else
+                System.out.println(MINORE + coeff + MAGGIORE);
+        }
+        System.out.println(QUADRA_CHIUSA + "\n");
+        //Calcolo soluzione multipla
+        if(model.getConstrs().length == counter)
+            System.out.println(SOLUZIONE_MULTIPLA + MINORE + NO + MAGGIORE);
+        else
+            System.out.println(SOLUZIONE_MULTIPLA + MINORE + SI + MAGGIORE);
+        //Calcolo soluzione degenere
+        boolean degenere = false;
+        for (GRBVar var : model.getVars())
+        {
+            if (var.get(GRB.DoubleAttr.X) == 0)
+                degenere = true;
+        }
+        if(degenere)
+            System.out.println(SOLUZIONE_DEGENERE + MINORE + SI + MAGGIORE);
+        else
+            System.out.println(SOLUZIONE_DEGENERE + MINORE + NO + MAGGIORE);
+        System.out.println("\n" + VINCOLI_VERTICE_OTTIMO);
+        //Identificazione vertice ottimo
+        for(GRBConstr constr : model.getConstrs())
+        {
+            if(constr.get(GRB.DoubleAttr.Slack) == 0)
+            {
+               System.out.println(MINORE + constr.get(GRB.StringAttr.ConstrName) + MAGGIORE);
+            }
+        }
+        System.out.println(QUADRA_CHIUSA + "\n");
+    }
+
+    private static void showThirdAnswer(GRBEnv env,
+                                        int[][] spettatori_per_emittente_per_fascia,
+                                        int[][] costi_al_minuto_per_emittente_per_fascia,
+                                        int[][] minuti_massimi_per_emittente_per_fascia,
+                                        int[] spesa_max_per_emittente,
+                                        double budget_percentuale,
+                                        int copertura_giornaliera_minima,
+                                        int emittenti,
+                                        int fasce
+    ) throws GRBException
+    {
+        System.out.println(QUESITO_3);
+        GRBModel firstModelNotOptimal= new GRBModel(env);
+        GRBModel secondModelNotOptimal= new GRBModel(env);
+        GRBModel thirdModelNotOptimal= new GRBModel(env);
+
+        //Prima soluzione non ottima: Selezioniamo la funzione obiettivo scartata dal valore assoluto dal modello ottimo
+        GRBVar[][] xij1 = addVars(firstModelNotOptimal, emittenti, fasce);
+        addNotOptimalObjectiveFunction(firstModelNotOptimal, xij1, spettatori_per_emittente_per_fascia, emittenti, fasce);
+        addCostPerMinuteConstr(firstModelNotOptimal, xij1, costi_al_minuto_per_emittente_per_fascia, spesa_max_per_emittente, emittenti, fasce);
+        addBudgetPerTimeSlotConstr(firstModelNotOptimal, xij1, costi_al_minuto_per_emittente_per_fascia, budget_percentuale, spesa_max_per_emittente, emittenti, fasce);
+        addMinutePerBroadcasterConstr(firstModelNotOptimal, xij1, minuti_massimi_per_emittente_per_fascia, emittenti, fasce);
+        addDailyCoverageConstr(firstModelNotOptimal, xij1, spettatori_per_emittente_per_fascia, copertura_giornaliera_minima, emittenti, fasce);
+        System.out.println(VARIABILI_NON_OTTIME_UNO);
+        resolve(firstModelNotOptimal);
+        for(GRBVar var : firstModelNotOptimal.getVars())
+        {
+            //stampo il valore delle variabili della soluzione non ottima trovata
+            System.out.println(var.get(GRB.StringAttr.VarName) + " = " + MINORE + var.get(GRB.DoubleAttr.X) + MAGGIORE);
+        }
+        System.out.println(QUADRA_CHIUSA +"\n");
+
+        //Seconda soluzione non ottima: Imposto un vincolo più restrittivo - In questo caso omega = 0.03 anzichè 0.02
+        double omega_ristretto = 0.03;
+        GRBVar[][] xij2 = addVars(secondModelNotOptimal, emittenti, fasce);
+        addNotOptimalObjectiveFunction(secondModelNotOptimal, xij2, spettatori_per_emittente_per_fascia, emittenti, fasce);
+        addCostPerMinuteConstr(secondModelNotOptimal, xij2, costi_al_minuto_per_emittente_per_fascia, spesa_max_per_emittente, emittenti, fasce);
+        addBudgetPerTimeSlotConstr(secondModelNotOptimal, xij2, costi_al_minuto_per_emittente_per_fascia, omega_ristretto, spesa_max_per_emittente, emittenti, fasce);
+        addMinutePerBroadcasterConstr(secondModelNotOptimal, xij2, minuti_massimi_per_emittente_per_fascia, emittenti, fasce);
+        addDailyCoverageConstr(secondModelNotOptimal, xij2, spettatori_per_emittente_per_fascia, copertura_giornaliera_minima, emittenti, fasce);
+        resolve(secondModelNotOptimal);
+        System.out.println(VARIABILI_NON_OTTIME_DUE);
+        for(GRBVar var : secondModelNotOptimal.getVars())
+        {
+            //stampo il valore delle variabili della soluzione non ottima trovata
+            System.out.println(var.get(GRB.StringAttr.VarName) + " = " + MINORE + var.get(GRB.DoubleAttr.X) + MAGGIORE);
+        }
+        System.out.println(QUADRA_CHIUSA +"\n");
+
+
+    }
+
+    private static void addNotOptimalObjectiveFunction(GRBModel model, GRBVar[][] xij, int[][] spettatori, int emittenti, int fasce) throws GRBException
+    // Metodo per inserire una funzione obiettivo non ottima per la risoluzione del problema
+    // Il modulo che seleziona il valore assoluto positivo per il problema di ricerca dell'ottimo viene invertito
+    {
+        int mezzagiornata = (fasce / 2) - 1; // -1 per adattare all'array che parte da 0
+        int modulo_plus = 0, modulo_minus = 0;
+        GRBLinExpr obj_plus = new GRBLinExpr();
+        GRBLinExpr obj_minus = new GRBLinExpr();
+        for(int i = 0; i < emittenti; i++)
+        {
+            for(int j = 0; j < fasce; j++)
+            {
+                if (j <= mezzagiornata)
+                {
+                    modulo_plus += spettatori[i][j];
+                    modulo_minus += -spettatori[i][j];
+                    obj_plus.addTerm(spettatori[i][j], xij[i][j]); //Se la fascia è tra le prime 4, sommo il valore
+                    obj_minus.addTerm(-spettatori[i][j], xij[i][j]); // Costruisco anche la funzione obiettivo opposta
+                }
+                else
+                {
+                    modulo_plus += -spettatori[i][j];
+                    modulo_minus += spettatori[i][j];
+                    obj_plus.addTerm(-spettatori[i][j], xij[i][j]); //Se la fascia è tra le ultime 4, sottraggo il valore
+                    obj_minus.addTerm(spettatori[i][j], xij[i][j]);
+                }
+            }
+        }
+        if (modulo_plus < modulo_minus) // Seleziono il valore non ottimo
+            model.setObjective(obj_plus);
+        else
+            model.setObjective(obj_minus);
+        model.set(GRB.IntAttr.ModelSense, GRB.MINIMIZE); //Imposto di trovare il minimo per la funzione obbiettivo
     }
 }
